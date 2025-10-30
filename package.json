@@ -1,0 +1,24 @@
+{
+  "name": "pdf-to-video-jsoncut",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file=.env server.js",
+    "start": "NODE_ENV=production node server.js"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.0",
+    "@supabase/supabase-js": "^2.45.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "ffmpeg-static": "^5.2.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "multer": "^1.4.5-lts.1",
+    "openai": "^4.56.0",
+    "pdf-parse": "^1.1.1",
+    "sharp": "^0.33.3",
+    "tslib": "^2.6.2",
+    "undici": "^6.22.0",
+    "zod": "^3.23.8"
+  }
+}

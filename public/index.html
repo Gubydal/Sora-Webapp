@@ -1,0 +1,326 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PDF to AI Summary Video</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    :root{
+      --bg:#0b1020; --panel:#121831; --muted:#9aa3b2; --text:#e5e7eb; --brand:#6366f1;
+      --ok:#22c55e; --danger:#ef4444;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: 'Outfit', ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;
+      background: radial-gradient(1200px 800px at 10% -10%, #131a36 0%, #0b1020 50%);
+      color:var(--text);
+    }
+    .wrap{ max-width:820px; margin:0 auto; padding:24px; }
+    header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:8px; }
+    h1{ font-size:20px; font-family: 'Outfit', sans-serif; margin:0; letter-spacing:.2px; }
+    .card{
+      background: linear-gradient(180deg, rgba(30,41,79,.6), rgba(12,19,47,.6));
+      border:1px solid #1f2a4a;
+      border-radius:16px;
+      padding:18px;
+      box-shadow:0 12px 32px rgba(0,0,0,.28);
+    }
+    .row{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    .btn{
+      background:var(--brand); color:#fff; border:0; border-radius:10px;
+      padding:11px 18px; font-weight:600; cursor:pointer; transition:opacity .2s ease;
+    }
+    .btn[disabled]{ opacity:.55; cursor:not-allowed; }
+    .drop{
+      border:1px dashed #2a3561; padding:20px; border-radius:12px;
+      text-align:center; background:#0d1430; cursor:pointer; min-height:120px;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+    }
+    .help{ color:var(--muted); font-size:13px; margin-top:6px; }
+    .muted{ color:var(--muted); }
+    a.btn{ text-decoration:none; display:inline-flex; align-items:center; gap:8px; }
+    .orientation{ display:flex; gap:8px; margin-top:12px; }
+    .orientation .pill{
+      flex:1; border:1px solid #1f2a4a; border-radius:999px; padding:6px 12px;
+      display:flex; align-items:center; justify-content:center;
+      font-size:13px; color:var(--muted); cursor:pointer; transition:all .2s ease;
+      background:#0d1430;
+    }
+    .orientation .pill input{ display:none; }
+    .orientation .pill.active{
+      border-color:var(--brand); color:var(--text);
+      box-shadow:0 0 0 1px rgba(99,102,241,.45);
+    }
+    .stepper{
+      list-style:none; padding:0; margin:18px 0 12px; display:flex; gap:8px; flex-wrap:wrap;
+    }
+    .stepper li{
+      flex:1; min-width:110px; display:flex; align-items:center; gap:8px;
+      font-size:13px; color:var(--muted); border:1px solid #1f2a4a;
+      border-radius:12px; padding:8px 10px; background:#0d1430; transition:all .2s ease;
+    }
+    .stepper .step-index{
+      width:22px; height:22px; border-radius:999px; border:1px solid currentColor;
+      display:flex; align-items:center; justify-content:center; font-size:11px;
+    }
+    .stepper li.active{
+      color:var(--text); border-color:var(--brand);
+      box-shadow:0 0 0 1px rgba(99,102,241,.35);
+    }
+    .stepper li.active .step-index{
+      background:var(--brand); border-color:var(--brand); color:#fff;
+    }
+    .stepper li.done{
+      color:var(--ok); border-color:var(--ok); box-shadow:none;
+    }
+    .stepper li.done .step-index{
+      background:var(--ok); border-color:var(--ok); color:#041227;
+    }
+    .stepper li.error{
+      color:var(--danger); border-color:var(--danger);
+    }
+    .stepper li.error .step-index{
+      border-color:var(--danger); color:var(--danger);
+    }
+    .log{
+      background:#050816; border:1px solid #101632; border-radius:12px;
+      padding:12px; height:190px; overflow:auto; font-size:12px; white-space:pre-wrap;
+    }
+    @media (max-width:640px){
+      .row{ flex-direction:column; align-items:stretch; }
+      .orientation{ flex-direction:column; }
+      .stepper li{ flex:1 1 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>PDF to AI Summary Video</h1>
+      <small class="muted">Everything is rendered server-side</small>
+    </header>
+
+    <section class="card">
+      <div class="row">
+        <label class="drop" style="flex:1" id="drop">
+          <input type="file" id="pdf" accept="application/pdf" style="display:none" />
+          <div><strong>Drop your PDF here</strong> or click to choose</div>
+          <div class="help">We will analyse it, plan slides, and return a rendered video.</div>
+        </label>
+        <button class="btn" id="go" disabled>Create video</button>
+      </div>
+      <div class="orientation" role="radiogroup" aria-label="Orientation">
+        <label class="pill active">
+          <input type="radio" name="orientation" value="9:16" checked />
+          Vertical 9:16
+        </label>
+      <label class="pill">
+        <input type="radio" name="orientation" value="16:9" />
+        Horizontal 16:9
+      </label>
+    </div>
+
+      <ul class="stepper" id="stepper" aria-live="polite">
+        <li data-step="analyze" class="active"><span class="step-index">1</span><span>Analyze</span></li>
+        <li data-step="plan"><span class="step-index">2</span><span>Plan slides</span></li>
+        <li data-step="generate-images"><span class="step-index">3</span><span>Generate images</span></li>
+        <li data-step="tts"><span class="step-index">4</span><span>TTS</span></li>
+        <li data-step="render"><span class="step-index">5</span><span>Render</span></li>
+      </ul>
+
+      <p id="status" class="help">Status: waiting for file...</p>
+      <div id="result"></div>
+      <h3 style="margin:16px 0 6px">Log</h3>
+      <pre class="log" id="log"></pre>
+    </section>
+  </main>
+<script>
+const pdf = document.getElementById('pdf');
+const drop = document.getElementById('drop');
+const go  = document.getElementById('go');
+const log = document.getElementById('log');
+const statusEl = document.getElementById('status');
+const result = document.getElementById('result');
+const orientationInputs = document.querySelectorAll('input[name="orientation"]');
+const stepper = document.getElementById('stepper');
+const steps = ['analyze','plan','generate-images','tts','render'];
+const stepItems = steps.map(step => stepper.querySelector(`[data-step="${step}"]`));
+let orientation = '9:16';
+let stepperTimer = null;
+let stepperIndex = 0;
+const API_BASE = (window.location.protocol === 'file:' || window.location.port === '5500')
+  ? 'http://localhost:8787'
+  : '';
+const API_ENDPOINT = `${API_BASE}/api/create-video`;
+
+function setOrientationPillState(){
+  orientationInputs.forEach(input => {
+    const pill = input.closest('.pill');
+    if (pill) pill.classList.toggle('active', input.checked);
+  });
+}
+
+orientationInputs.forEach(input => {
+  input.addEventListener('change', () => {
+    orientation = input.value === '16:9' ? '16:9' : '9:16';
+    setOrientationPillState();
+  });
+});
+
+function write(msg){
+  const stamp = new Date().toLocaleTimeString();
+  log.textContent += `[${stamp}] ${msg}
+`;
+  log.scrollTop = log.scrollHeight;
+}
+
+function clearLog(){
+  log.textContent = '';
+}
+
+function setActiveStep(step){
+  stepItems.forEach(item => {
+    if (!item) return;
+    item.classList.toggle('active', item.dataset.step === step);
+    if (item.dataset.step !== step) item.classList.remove('error');
+  });
+}
+
+function resetStepper(){
+  stepItems.forEach(item => {
+    if (!item) return;
+    item.classList.remove('done','error','active');
+  });
+  stepperIndex = 0;
+  setActiveStep(steps[0]);
+}
+
+function startStepperAnimation(){
+  stopStepperAnimation();
+  resetStepper();
+  stepperTimer = setInterval(() => {
+    stepperIndex = Math.min(stepperIndex + 1, steps.length - 1);
+    setActiveStep(steps[stepperIndex]);
+    if (stepperIndex === steps.length - 1) {
+      stopStepperAnimation();
+    }
+  }, 4000);
+}
+
+function stopStepperAnimation(){
+  if (stepperTimer) {
+    clearInterval(stepperTimer);
+    stepperTimer = null;
+  }
+}
+
+function applyProgress(progressArr){
+  if (!Array.isArray(progressArr)) return;
+  progressArr.forEach(entry => {
+    const item = stepItems.find(el => el.dataset.step === entry.step);
+    if (!item) return;
+    if (entry.status === 'completed') {
+      item.classList.remove('active','error');
+      item.classList.add('done');
+    } else if (entry.status === 'started') {
+      setActiveStep(entry.step);
+    } else if (entry.status === 'error') {
+      item.classList.remove('active');
+      item.classList.add('error');
+    }
+    if (entry.detail) write(`${entry.step}: ${entry.detail}`);
+  });
+}
+
+drop.addEventListener('click', () => pdf.click());
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.style.borderColor = '#6366f1'; });
+drop.addEventListener('dragleave', () => { drop.style.borderColor = '#2a3561'; });
+drop.addEventListener('drop', e => {
+  e.preventDefault(); drop.style.borderColor = '#2a3561';
+  const f = e.dataTransfer.files?.[0];
+  if (f) {
+    pdf.files = e.dataTransfer.files;
+    onFile();
+  }
+});
+pdf.addEventListener('change', onFile);
+
+function onFile(){
+  if (!pdf.files?.length) return;
+  go.disabled = false;
+  statusEl.textContent = `Status: ready - ${pdf.files[0].name}`;
+}
+
+go.addEventListener('click', async () => {
+  if (!pdf.files?.length) return;
+  go.disabled = true;
+  clearLog();
+  result.innerHTML = '';
+  resetStepper();
+  startStepperAnimation();
+
+  statusEl.textContent = 'Status: processing...';
+  write(`Orientation selected: ${orientation}`);
+  write('Uploading PDF to server...');
+  const fd = new FormData();
+  fd.append('pdf', pdf.files[0]);
+  fd.append('orientation', orientation);
+
+  try{
+    const response = await fetch(API_ENDPOINT, { method:'POST', body: fd });
+    const payload = await response.json().catch(() => null);
+    stopStepperAnimation();
+    applyProgress(payload?.progress);
+
+    if (!response.ok) {
+      const message = payload?.error || `Server error: ${response.status}`;
+      statusEl.textContent = 'Status: failed';
+      write(`Error: ${message}`);
+      throw new Error(message);
+    }
+
+    statusEl.textContent = 'Status: completed';
+    write('Video ready.');
+        if (Array.isArray(payload?.slides)) {
+      payload.slides.forEach(slide => {
+        write(`Slide ${slide.index} (${slide.imageSource}/${slide.textMode}) - headline ${slide.headline}`);
+      });
+    }
+    if (payload?.provider) {
+      write(`Renderer: ${payload.provider}`);
+    }
+    result.innerHTML = `
+      <a class="btn" href="${payload.downloadUrl}">Download video</a>
+      <div class="help">
+        File: <code>${payload.filename || 'summary-video.mp4'}</code>,
+        duration: ${(payload.durationSeconds || 0)}s,
+        orientation: ${payload.orientation || orientation}
+      </div>`;
+  }catch(err){
+    alert(err?.message || 'Failed to create video');
+  }finally{
+    stopStepperAnimation();
+    go.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
