@@ -15,83 +15,41 @@ import { renderSlideSVG } from './slide-svg.js';
 import { createLongcatClient } from './lib/longcat.js';
 import { pdfBufferToPlainText } from './lib/document-text.js';
 
-    const audioClips = [];
-    let ttsError = null;
-    for (let i = 0; i < mediaEntries.length; i += 1) {
-      const rawHeadline = mediaEntries[i].slide?.headline || `Section ${i + 1}`;
-      const speechText = rawHeadline.replace(/\s+/g, ' ').trim();
-      try {
-        const tts = await synthesizeHeadline({
-          headline: speechText,
-          index: i + 1,
-          outputDir: requestDir,
-          apiKey: ELEVENLABS_API_KEY,
-          voiceId: ELEVENLABS_VOICE_ID
-        });
-        audioClips.push(tts);
-        slideLogs[i].ttsDuration = Number((tts.duration || 0).toFixed(2));
-        slideLogs[i].voiceoverText = speechText;
-      } catch (error) {
-        ttsError = error instanceof Error ? error : new Error(String(error));
-        const detail = ttsError.message?.slice?.(0, 180) || String(ttsError);
-        console.warn(`Voiceover generation failed on slide ${i + 1}:`, detail);
-        progress.push({
-          step: 'tts',
-          status: 'info',
-          detail: `Voiceover disabled after failure on slide ${i + 1}: ${detail}`
-        });
-        break;
-      }
-    }
+const app = express();
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  next();
+});
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static('public'));
+app.use('/assets', express.static('assets'));
+const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } });
 
-    let voiceoverPath;
-    let voiceoverDuration;
-    if (!ttsError && audioClips.length === mediaEntries.length && audioClips.length) {
-      progress.push({
-        step: 'tts',
-        status: 'completed',
-        detail: `Generated ${audioClips.length} voiceover clips`
-      });
+const FPS = +process.env.VIDEO_FPS || 30;
+const FORMAT = process.env.VIDEO_FORMAT || 'mp4';
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
+const DEFAULT_ORIENTATION = normalizeOrientation(process.env.DEFAULT_ORIENTATION || '9:16');
 
-      const standardVoiceoverPath = path.join(requestDir, 'voiceover.mp3');
-      const voiceover = await buildVoiceover(audioClips, {
-        workingDir: requestDir,
-        outputPath: standardVoiceoverPath
-      });
-      voiceoverPath = voiceover.filePath;
-      voiceoverDuration = voiceover.duration;
-    } else {
-      const totalDuration = mediaEntries.reduce(
-        (sum, entry) => sum + (Number.isFinite(entry.duration) && entry.duration > 0 ? entry.duration : 10),
-        0
-      );
-      const silentPath = path.join(requestDir, 'voiceover-silent.mp3');
-      const silent = await buildSilentVoiceover({
-        durationSeconds: totalDuration,
-        outputPath: silentPath
-      });
-      voiceoverPath = silent.filePath;
-      voiceoverDuration = silent.duration;
-      slideLogs.forEach((log, index) => {
-        if (audioClips[index]) {
-          return;
-        }
-        log.ttsDuration = 0;
-        log.voiceoverText = null;
-        if (ttsError) {
-          log.ttsError = ttsError.message || String(ttsError);
-        } else {
-          log.ttsError = 'Voiceover skipped (no audio generated)';
-        }
-      });
-      progress.push({
-        step: 'tts',
-        status: 'completed',
-        detail: 'Voiceover skipped; using silent audio track'
-      });
-    }
+const ORIENTATIONS = {
+  '9:16': {
+    width: +process.env.VERTICAL_WIDTH || +process.env.VIDEO_WIDTH || 1080,
+    height: +process.env.VERTICAL_HEIGHT || +process.env.VIDEO_HEIGHT || 1920
+  },
+  '16:9': {
+    width: +process.env.HORIZONTAL_WIDTH || 1920,
+    height: +process.env.HORIZONTAL_HEIGHT || 1080
+  }
+};
 
 const longcat = createLongcatClient();
+const RENDERS_DIR = path.resolve('tmp', 'renders');
+const downloadStore = new Map();
+
+app.options('/api/create-video', (req, res) => {
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.sendStatus(204);
 });
