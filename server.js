@@ -9,48 +9,89 @@ import { randomUUID } from 'crypto';
 import { summarizeToSlides } from './lib/summarize.js';
 import { selectIllustrationAsset } from './lib/supabase-assets.js';
 import { synthesizeHeadline } from './lib/tts.js';
-import { buildVoiceover } from './lib/audio-stitch.js';
+import { buildSilentVoiceover, buildVoiceover } from './lib/audio-stitch.js';
 import { renderLocalVideo } from './lib/local-render.js';
 import { renderSlideSVG } from './slide-svg.js';
 import { createLongcatClient } from './lib/longcat.js';
 import { pdfBufferToPlainText } from './lib/document-text.js';
 
-const app = express();
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  next();
-});
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
-app.use('/assets', express.static('assets'));
-const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } }); // 25MB
+    const audioClips = [];
+    let ttsError = null;
+    for (let i = 0; i < mediaEntries.length; i += 1) {
+      const rawHeadline = mediaEntries[i].slide?.headline || `Section ${i + 1}`;
+      const speechText = rawHeadline.replace(/\s+/g, ' ').trim();
+      try {
+        const tts = await synthesizeHeadline({
+          headline: speechText,
+          index: i + 1,
+          outputDir: requestDir,
+          apiKey: ELEVENLABS_API_KEY,
+          voiceId: ELEVENLABS_VOICE_ID
+        });
+        audioClips.push(tts);
+        slideLogs[i].ttsDuration = Number((tts.duration || 0).toFixed(2));
+        slideLogs[i].voiceoverText = speechText;
+      } catch (error) {
+        ttsError = error instanceof Error ? error : new Error(String(error));
+        const detail = ttsError.message?.slice?.(0, 180) || String(ttsError);
+        console.warn(`Voiceover generation failed on slide ${i + 1}:`, detail);
+        progress.push({
+          step: 'tts',
+          status: 'info',
+          detail: `Voiceover disabled after failure on slide ${i + 1}: ${detail}`
+        });
+        break;
+      }
+    }
 
-// --- env/config
-const FPS = +process.env.VIDEO_FPS || 30;
-const FORMAT = process.env.VIDEO_FORMAT || 'mp4';
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
-const DEFAULT_ORIENTATION = normalizeOrientation(process.env.DEFAULT_ORIENTATION || '9:16');
+    let voiceoverPath;
+    let voiceoverDuration;
+    if (!ttsError && audioClips.length === mediaEntries.length && audioClips.length) {
+      progress.push({
+        step: 'tts',
+        status: 'completed',
+        detail: `Generated ${audioClips.length} voiceover clips`
+      });
 
-const ORIENTATIONS = {
-  '9:16': {
-    width: +process.env.VERTICAL_WIDTH || +process.env.VIDEO_WIDTH || 1080,
-    height: +process.env.VERTICAL_HEIGHT || +process.env.VIDEO_HEIGHT || 1920
-  },
-  '16:9': {
-    width: +process.env.HORIZONTAL_WIDTH || 1920,
-    height: +process.env.HORIZONTAL_HEIGHT || 1080
-  }
-};
+      const standardVoiceoverPath = path.join(requestDir, 'voiceover.mp3');
+      const voiceover = await buildVoiceover(audioClips, {
+        workingDir: requestDir,
+        outputPath: standardVoiceoverPath
+      });
+      voiceoverPath = voiceover.filePath;
+      voiceoverDuration = voiceover.duration;
+    } else {
+      const totalDuration = mediaEntries.reduce(
+        (sum, entry) => sum + (Number.isFinite(entry.duration) && entry.duration > 0 ? entry.duration : 10),
+        0
+      );
+      const silentPath = path.join(requestDir, 'voiceover-silent.mp3');
+      const silent = await buildSilentVoiceover({
+        durationSeconds: totalDuration,
+        outputPath: silentPath
+      });
+      voiceoverPath = silent.filePath;
+      voiceoverDuration = silent.duration;
+      slideLogs.forEach((log, index) => {
+        if (audioClips[index]) {
+          return;
+        }
+        log.ttsDuration = 0;
+        log.voiceoverText = null;
+        if (ttsError) {
+          log.ttsError = ttsError.message || String(ttsError);
+        } else {
+          log.ttsError = 'Voiceover skipped (no audio generated)';
+        }
+      });
+      progress.push({
+        step: 'tts',
+        status: 'completed',
+        detail: 'Voiceover skipped; using silent audio track'
+      });
+    }
 
 const longcat = createLongcatClient();
-const RENDERS_DIR = path.resolve('tmp', 'renders');
-const downloadStore = new Map();
-
-app.options('/api/create-video', (req, res) => {
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.sendStatus(204);
 });
@@ -78,10 +119,31 @@ app.post('/api/create-video', upload.single('pdf'), async (req, res) => {
       throw new Error('Unable to extract usable text from PDF');
     }
     progress.push({ step: 'analyze', status: 'completed', detail: `Extracted ${text.length} chars` });
+    const excerpt = text.slice(0, 180).replace(/\s+/g, ' ').trim();
+    if (excerpt) {
+      progress.push({ step: 'analyze', status: 'info', detail: `Excerpt: ${excerpt}` });
+    }
 
     progress.push({ step: 'plan', status: 'started' });
     const summary = await summarizeToSlides({ longcat, text });
+    if (Array.isArray(summary.warnings) && summary.warnings.length) {
+      summary.warnings.forEach((warning) => {
+        progress.push({ step: 'plan', status: 'info', detail: warning });
+      });
+    }
     const slides = summary.slides;
+    slides.forEach((slide, idx) => {
+      const paragraphPreview = (slide?.paragraph || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+      const bulletPreview = Array.isArray(slide?.bullets) && slide.bullets.length
+        ? slide.bullets.map((entry) => String(entry || '').trim()).filter(Boolean).slice(0, 2).join(' | ').slice(0, 160)
+        : '';
+      const detailParts = [
+        `Slide ${idx + 1}: ${slide?.headline || '(no headline)'}`,
+        paragraphPreview ? `Paragraph: ${paragraphPreview}` : 'Paragraph: <empty>',
+        bulletPreview ? `Bullets: ${bulletPreview}` : null
+      ].filter(Boolean);
+      progress.push({ step: 'plan', status: 'info', detail: detailParts.join(' · ') });
+    });
     progress.push({
       step: 'plan',
       status: 'completed',
@@ -92,6 +154,7 @@ app.post('/api/create-video', upload.single('pdf'), async (req, res) => {
     const mediaEntries = [];
     for (let i = 0; i < slides.length; i += 1) {
       const slide = slides[i];
+      const narrativeLines = buildSlideNarrativeLines(slide);
       const filename = `slide-${i + 1}.png`;
       const outputPath = path.join(requestDir, filename);
 
@@ -114,7 +177,7 @@ app.post('/api/create-video', upload.single('pdf'), async (req, res) => {
         height,
         orientation,
         headline: slide.headline,
-        paragraphs: slide.bullets,
+        paragraphs: narrativeLines,
         imageBuffer: illustration?.buffer ?? null,
         showFrame: true,
         showBullets: true
@@ -145,7 +208,7 @@ app.post('/api/create-video', upload.single('pdf'), async (req, res) => {
           position: isVertical ? 'top' : 'top-left',
           animation: { name: 'fadeInUp', start: 0, duration: 0.8 }
         },
-        ...buildLayerParagraphs(slide.bullets).map((text, idx) => ({
+        ...narrativeLines.map((text, idx) => ({
           type: 'text',
           text,
           fontFamily: 'Outfit',
@@ -173,6 +236,8 @@ app.post('/api/create-video', upload.single('pdf'), async (req, res) => {
       slideLogs.push({
         index: i + 1,
         headline: slide.headline,
+        paragraph: slide.paragraph || null,
+        narrativeLines,
         imageSource: assetInfo.type,
         textMode: 'svg',
         chart: slide.chart?.type || null,
@@ -184,30 +249,80 @@ app.post('/api/create-video', upload.single('pdf'), async (req, res) => {
 
     progress.push({ step: 'tts', status: 'started' });
     const audioClips = [];
+    let ttsError = null;
     for (let i = 0; i < mediaEntries.length; i += 1) {
-      const tts = await synthesizeHeadline({
-        headline: mediaEntries[i].slide.headline,
-        index: i + 1,
-        outputDir: requestDir,
-        apiKey: ELEVENLABS_API_KEY,
-        voiceId: ELEVENLABS_VOICE_ID
-      });
-      audioClips.push(tts);
-      slideLogs[i].ttsDuration = Number((tts.duration || 0).toFixed(2));
+      const rawHeadline = mediaEntries[i].slide?.headline || `Section ${i + 1}`;
+      const speechText = rawHeadline.replace(/\s+/g, ' ').trim();
+      try {
+        const tts = await synthesizeHeadline({
+          headline: speechText,
+          index: i + 1,
+          outputDir: requestDir,
+          apiKey: ELEVENLABS_API_KEY,
+          voiceId: ELEVENLABS_VOICE_ID
+        });
+        audioClips.push(tts);
+        slideLogs[i].ttsDuration = Number((tts.duration || 0).toFixed(2));
+        slideLogs[i].voiceoverText = speechText;
+      } catch (error) {
+        ttsError = error instanceof Error ? error : new Error(String(error));
+        const detail = ttsError.message?.slice?.(0, 180) || String(ttsError);
+        console.warn(`Voiceover generation failed on slide ${i + 1}:`, detail);
+        progress.push({
+          step: 'tts',
+          status: 'info',
+          detail: `Voiceover disabled after failure on slide ${i + 1}: ${detail}`
+        });
+        break;
+      }
     }
-    progress.push({
-      step: 'tts',
-      status: 'completed',
-      detail: `Generated ${audioClips.length} voiceover clips`
-    });
 
-    const standardVoiceoverPath = path.join(requestDir, 'voiceover.mp3');
-    const voiceover = await buildVoiceover(audioClips, {
-      workingDir: requestDir,
-      outputPath: standardVoiceoverPath
-    });
-    const voiceoverPath = voiceover.filePath;
-    const voiceoverDuration = voiceover.duration;
+    let voiceoverPath;
+    let voiceoverDuration;
+    if (!ttsError && audioClips.length === mediaEntries.length && audioClips.length) {
+      progress.push({
+        step: 'tts',
+        status: 'completed',
+        detail: `Generated ${audioClips.length} voiceover clips`
+      });
+
+      const standardVoiceoverPath = path.join(requestDir, 'voiceover.mp3');
+      const voiceover = await buildVoiceover(audioClips, {
+        workingDir: requestDir,
+        outputPath: standardVoiceoverPath
+      });
+      voiceoverPath = voiceover.filePath;
+      voiceoverDuration = voiceover.duration;
+    } else {
+      const totalDuration = mediaEntries.reduce(
+        (sum, entry) => sum + (Number.isFinite(entry.duration) && entry.duration > 0 ? entry.duration : 10),
+        0
+      );
+      const silentPath = path.join(requestDir, 'voiceover-silent.mp3');
+      const silent = await buildSilentVoiceover({
+        durationSeconds: totalDuration,
+        outputPath: silentPath
+      });
+      voiceoverPath = silent.filePath;
+      voiceoverDuration = silent.duration;
+      slideLogs.forEach((log, index) => {
+        if (audioClips[index]) {
+          return;
+        }
+        log.ttsDuration = 0;
+        log.voiceoverText = null;
+        if (ttsError) {
+          log.ttsError = ttsError.message || String(ttsError);
+        } else {
+          log.ttsError = 'Voiceover skipped (no audio generated)';
+        }
+      });
+      progress.push({
+        step: 'tts',
+        status: 'completed',
+        detail: 'Voiceover skipped; using silent audio track'
+      });
+    }
 
     mediaEntries.forEach((entry) => {
       entry.duration = 10;
@@ -293,6 +408,27 @@ app.listen(port, () => console.log(`Server on http://localhost:${port}`));
 
 // ------------------- Helpers -------------------
 
+function buildSlideNarrativeLines(slide) {
+  const paragraph = typeof slide?.paragraph === 'string' ? slide.paragraph.replace(/\s+/g, ' ').trim() : '';
+  if (paragraph) {
+    const sentences = paragraph
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+    const segments =
+      sentences.length > 0
+        ? sentences
+        : paragraph
+            .split(/[,;\u2022]+/)
+            .map((segment) => segment.trim())
+            .filter(Boolean);
+    const lines = segments.map((line) => truncateForLayer(line, 140)).filter(Boolean);
+    if (lines.length) {
+      return lines.slice(0, 4);
+    }
+  }
+  return buildLayerParagraphs(slide?.bullets || []);
+}
 function buildLayerParagraphs(bullets = []) {
   return (bullets || [])
     .map((entry) => String(entry || '').trim())
@@ -336,6 +472,20 @@ async function safeRemove(dir) {
     console.warn('Failed to clean temp dir', err);
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

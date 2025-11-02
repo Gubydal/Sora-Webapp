@@ -4,7 +4,7 @@ A self-hosted service that turns PDF documents into narrated summary videos. The
 
 ## Highlights
 - **Document ingestion** – Extracts clean text from uploaded PDFs using `pdf-parse` with whitespace normalization.
-- **AI slide planning** – Uses the Longcat/OpenAI stack to outline 3‑6 slides with headlines, bullets, and optional chart hints.
+- **AI slide planning** – Uses the Longcat API to outline 3‑6 slides with headlines, bullets, and optional chart hints.
 - **Branded slide visuals** – Renders SVG → PNG slides locally with `resvg`, pulling supporting art from Supabase storage when configured.
 - **Automatic narration** – Generates per-slide voiceovers via ElevenLabs and stitches them into a single track.
 - **Deterministic video render** – Builds videos locally with `ffmpeg-static`/`fluent-ffmpeg`; no third-party renderers.
@@ -22,8 +22,9 @@ npm run dev           # starts Express on http://localhost:8787
 ### Required Environment Variables
 | Variable | Purpose |
 | --- | --- |
-| `OPENAI_API_KEY` | Used by Longcat/OpenAI summarization pipeline |
-| `JSONCUT_API_KEY`, `JSONCUT_BASE_URL` (optional) | Only needed if you call the JSONCut API elsewhere |
+| `LONGCAT_API_KEY` (and optional `LONGCAT_API_KEYS`) | Used by the Longcat summarization pipeline |
+| `LONGCAT_API_BASE` (optional) | Override the default Longcat API URL |
+| `JSONCUT_API_KEY`, `JSONCUT_BASE_URL` | Required for JSONCut rendering |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Required for TTS voiceovers |
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY` or `SUPABASE_SERVICE_ROLE` | Needed if you want remote illustration assets; otherwise leave unset |
 | `SUPABASE_BUCKET` | Asset bucket name (default `slides-assets`) |
@@ -100,7 +101,6 @@ slide-svg.js    → SVG template + renderer used for each slide
 - Keep fonts in `assets/fonts/` synced with `src/font-embed.js` to ensure accurate SVG text rendering.
 
 ## Roadmap / Ideas
-- Optional OpenAI or local TTS fallback (scaffolding already present in `.env`).
 - Slide theming controls exposed via the API.
 - Background music reintegration behind a feature flag if ever needed again.
 

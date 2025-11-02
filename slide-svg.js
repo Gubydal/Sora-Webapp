@@ -37,10 +37,7 @@ export async function composeSlideSVG(options = {}) {
 
   const headlineFontSize = orientation === "16:9" ? 72 : 68;
   const bodyFontSize = orientation === "16:9" ? 32 : 30;
-  const headlineLines =
-    orientation === "16:9"
-      ? wrapHeadlineWithWidth(headline, width, headlineFontSize)
-      : wrapText(headline, 20);
+  const headlineLines = wrapHeadlineWithWidth(headline, width, headlineFontSize);
 
   const layout =
     orientation === "16:9"
@@ -359,13 +356,45 @@ function wrapHeadlineWithWidth(text, totalWidth, fontSize) {
   if (!usableWidth) return [];
 
   const lines = wrapTextByWidth(text, usableWidth, fontSize, 2);
-  if (lines.length <= 2) {
-    return lines;
+  if (!lines.length) {
+    return [];
   }
 
-  const first = lines[0];
-  const remainder = lines.slice(1).join(" ").trim();
-  return [first, remainder];
+  if (lines.length === 1) {
+    const [onlyLine] = lines;
+    const words = onlyLine.split(' ').filter(Boolean);
+    if (words.length <= 1) {
+      const chunk = onlyLine.trim();
+      if (!chunk) return [];
+      const midpoint = Math.max(1, Math.ceil(chunk.length / 2));
+      const first = chunk.slice(0, midpoint).trim();
+      const second = chunk.slice(midpoint).trim();
+      if (second) {
+        return [first || chunk, second];
+      }
+      const splitFallback = Math.max(1, Math.floor(chunk.length / 2));
+      return [chunk.slice(0, splitFallback).trim() || chunk, chunk.slice(splitFallback).trim() || chunk];
+    }
+
+    const midpoint = Math.ceil(words.length / 2);
+    const first = words.slice(0, midpoint).join(' ');
+    let second = words.slice(midpoint).join(' ').trim();
+    if (!second) {
+      const chunk = onlyLine.trim();
+      const charSplit = Math.max(1, Math.floor(chunk.length / 2));
+      second = chunk.slice(charSplit).trim();
+      return [chunk.slice(0, charSplit).trim() || chunk, second || chunk];
+    }
+    return [first, second];
+  }
+
+  if (lines.length > 2) {
+    const first = lines[0];
+    const remainder = lines.slice(1).join(' ').trim();
+    return remainder ? [first, remainder] : [first, lines[1]];
+  }
+
+  return lines;
 }
 
 function wrapTextByWidth(text, maxWidth, fontSize, maxLines = Infinity) {
